@@ -61,12 +61,8 @@ jobs:
           p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
           s = p.read_text()
           old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
-          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = false;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = true;\n\t\t\tthis.params.touchInput = true;\n\t\t\tjavax.microedition.lcdui.Canvas.setScale(2, 2, 100);\n\t\t}\n'''
+          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\t// Stretch the 240x320 game to the entire physical display.\n\t\t\tthis.params.screenScaleType = 2;\n\t\t\tthis.params.screenScaleRatio = 100;\n\t\t\tthis.params.screenGravity = 2;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\t// Disable the stock phone keyboard for this build. Touch controls will be added separately later.\n\t\t\tthis.params.showKeyboard = false;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
           if old not in s: raise SystemExit('MicroLoader init block not found')
-          s = s.replace(old, new, 1)
-          old = 'ContextHolder.setVk(new VirtualKeyboard(params));'
-          new = 'ContextHolder.setVk(BuildConfig.FULL_EMULATOR ? new VirtualKeyboard(params) : new javax.microedition.lcdui.keyboard.StandaloneTouchControls(params));'
-          if old not in s: raise SystemExit('VirtualKeyboard construction not found')
           s = s.replace(old, new, 1)
           p.write_text(s)
 
@@ -97,51 +93,14 @@ jobs:
           p.write_text(s)
           PY
 
-          mkdir -p app/src/main/java/javax/microedition/lcdui/keyboard
-          cat > app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java <<'JAVA'
-          package javax.microedition.lcdui.keyboard;
-
-          import android.graphics.Paint;
-          import android.graphics.RectF;
-          import javax.microedition.lcdui.Canvas;
-          import javax.microedition.lcdui.graphics.CanvasWrapper;
-          import ru.playsoftware.j2meloader.config.ProfileModel;
-
-          public final class StandaloneTouchControls extends VirtualKeyboard {
-              private Canvas target;
-              private float joyCx, joyCy, joyRadius;
-              private float fiveCx, fiveCy, fiveRadius;
-              private int joyKey;
-              private boolean fiveDown;
-              public StandaloneTouchControls(ProfileModel settings) { super(settings); }
-              @Override public void setTarget(Canvas canvas) { target = canvas; }
-              @Override public void resize(RectF realScreen, float l, float t, float r, float b) {
-                  float w=Math.max(1,r-l), h=Math.max(1,b-t), size=Math.min(w,h);
-                  joyRadius=size*.115f; joyCx=l+size*.17f; joyCy=b-size*.17f;
-                  fiveRadius=size*.075f; fiveCx=r-size*.12f; fiveCy=b-size*.12f;
-              }
-              private boolean inJoy(float x,float y){float dx=x-joyCx,dy=y-joyCy;return dx*dx+dy*dy<=joyRadius*joyRadius;}
-              private boolean inFive(float x,float y){float dx=x-fiveCx,dy=y-fiveCy;return dx*dx+dy*dy<=fiveRadius*fiveRadius;}
-              private int direction(float x,float y){float dx=x-joyCx,dy=y-joyCy,dead=joyRadius*.28f;if(dx*dx+dy*dy<=dead*dead)return 0;return Math.abs(dx)>Math.abs(dy)?(dx<0?Canvas.KEY_LEFT:Canvas.KEY_RIGHT):(dy<0?Canvas.KEY_UP:Canvas.KEY_DOWN);}
-              private void setJoy(int key){if(target==null)return;if(key==joyKey)return;if(joyKey!=0)target.postKeyReleased(joyKey);joyKey=key;if(joyKey!=0)target.postKeyPressed(joyKey);target.repaint();}
-              @Override public boolean pointerPressed(int p,float x,float y){if(inJoy(x,y)){setJoy(direction(x,y));return true;}if(inFive(x,y)){if(!fiveDown&&target!=null)target.postKeyPressed(Canvas.KEY_NUM5);fiveDown=true;if(target!=null)target.repaint();return true;}return false;}
-              @Override public boolean pointerDragged(int p,float x,float y){if(inJoy(x,y)){setJoy(direction(x,y));return true;}if(joyKey!=0)setJoy(0);if(inFive(x,y)){if(!fiveDown&&target!=null)target.postKeyPressed(Canvas.KEY_NUM5);fiveDown=true;if(target!=null)target.repaint();return true;}return true;}
-              @Override public boolean pointerReleased(int p,float x,float y){setJoy(0);if(fiveDown&&target!=null)target.postKeyReleased(Canvas.KEY_NUM5);fiveDown=false;if(target!=null)target.repaint();return true;}
-              @Override public boolean keyPressed(int k){return false;}
-              @Override public boolean keyRepeated(int k){return false;}
-              @Override public boolean keyReleased(int k){return false;}
-              @Override public void paint(CanvasWrapper g){if(target==null)return;float r=joyRadius;RectF joy=new RectF(joyCx-r,joyCy-r,joyCx+r,joyCy+r);g.setFillColor(0x66000000);g.fillArc(joy,0,360);g.setDrawColor(0xCCFFFFFF);g.drawArc(joy,0,360);float k=r*.43f,kx=joyCx,ky=joyCy;if(joyKey==Canvas.KEY_LEFT)kx-=r*.34f;else if(joyKey==Canvas.KEY_RIGHT)kx+=r*.34f;else if(joyKey==Canvas.KEY_UP)ky-=r*.34f;else if(joyKey==Canvas.KEY_DOWN)ky+=r*.34f;RectF knob=new RectF(kx-k,ky-k,kx+k,ky+k);g.setFillColor(0xBBFFFFFF);g.fillArc(knob,0,360);float f=fiveRadius;RectF five=new RectF(fiveCx-f,fiveCy-f,fiveCx+f,fiveCy+f);g.setFillColor(fiveDown?0xCCFFFFFF:0x88000000);g.fillArc(five,0,360);g.setDrawColor(0xCCFFFFFF);g.drawArc(five,0,360);g.setTextAlign(Paint.Align.CENTER);g.setTextColor(fiveDown?0xFF000000:0xFFFFFFFF);g.drawString("5",fiveCx,fiveCy);}
-          }
-          JAVA
-
           test -f app/src/main/java/javax/microedition/shell/MicroActivity.java
-          test -f app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
           test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           test -f app/src/midlet/libs/game.jar
           grep -q "buildConfigField 'boolean', 'FULL_EMULATOR', 'false'" app/build.gradle
           grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
-          grep -q 'Canvas.setScale(2, 2, 100)' app/src/main/java/javax/microedition/shell/MicroLoader.java
-          ! grep -q 'postInvalidate' app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
+          grep -q 'screenScaleType = 2' app/src/main/java/javax/microedition/shell/MicroLoader.java
+          grep -q 'screenScaleRatio = 100' app/src/main/java/javax/microedition/shell/MicroLoader.java
+          grep -q 'showKeyboard = false' app/src/main/java/javax/microedition/shell/MicroLoader.java
 
       - name: Build standalone APK
         working-directory: runtime
