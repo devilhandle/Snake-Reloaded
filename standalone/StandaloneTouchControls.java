@@ -89,23 +89,24 @@ public final class StandaloneTouchControls extends VirtualKeyboard {
     @Override public void paint(CanvasWrapper g) {
         if (target == null) return;
         float r = joyRadius;
-        g.setColorAlpha(0x66000000);
+        // White joystick: translucent white base with a solid white moving knob.
+        g.setColorAlpha(0x55FFFFFF);
         g.fillArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
-        g.setColorAlpha(0xCCFFFFFF);
+        g.setColorAlpha(0xFFFFFFFF);
         g.drawArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
         float k = r * 0.43f, kx = joyCx, ky = joyCy;
         if (joyKey == Canvas.KEY_LEFT) kx -= r * .34f;
         else if (joyKey == Canvas.KEY_RIGHT) kx += r * .34f;
         else if (joyKey == Canvas.KEY_UP) ky -= r * .34f;
         else if (joyKey == Canvas.KEY_DOWN) ky += r * .34f;
-        g.setColorAlpha(0xBBFFFFFF);
+        g.setColorAlpha(0xFFFFFFFF);
         g.fillArc((int)(kx-k), (int)(ky-k), (int)(2*k), (int)(2*k), 0, 360);
         float f = fiveRadius;
-        g.setColorAlpha(fiveDown ? 0xCCFFFFFF : 0x88000000);
+        g.setColorAlpha(fiveDown ? 0xFFFFFFFF : 0x66FFFFFF);
         g.fillArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(0xCCFFFFFF);
+        g.setColorAlpha(0xFFFFFFFF);
         g.drawArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(fiveDown ? 0xFF000000 : 0xFFFFFFFF);
+        g.setColorAlpha(0xFF000000);
         g.drawString("5", (int)fiveCx, (int)fiveCy, Graphics.HCENTER | Graphics.VCENTER);
     }
 }
