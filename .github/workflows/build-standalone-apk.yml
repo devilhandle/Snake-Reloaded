@@ -50,7 +50,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # Embed the game JAR and remove release-keystore requirements.
           p = Path('app/build.gradle')
           s = p.read_text()
           if "src/midlet/libs/game.jar" not in s:
@@ -59,7 +58,6 @@ jobs:
           s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
           p.write_text(s)
 
-          # Standalone runtime: no Loader profile and no emulator fallback.
           p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
           s = p.read_text()
           old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
@@ -74,14 +72,23 @@ jobs:
 
           p = Path('app/src/main/java/javax/microedition/shell/MicroActivity.java')
           s = p.read_text()
-          old = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
-          new = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tif (BuildConfig.FULL_EMULATOR) Config.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
-          if old not in s: raise SystemExit('MicroActivity init block not found')
+          old = '''\t\tsetContentView(view);\n\t\tsetSupportActionBar(binding.toolbar);'''
+          new = '''\t\tsetContentView(view);\n\t\tsetSupportActionBar(binding.toolbar);\n\t\tforceImmersiveFullscreen();'''
+          if old not in s: raise SystemExit('MicroActivity content setup not found')
+          s = s.replace(old, new, 1)
+          old = '''\t@Override\n\tpublic void onWindowFocusChanged(boolean hasFocus) {\n\t\tsuper.onWindowFocusChanged(hasFocus);\n\t\tif (hasFocus && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT &&\n\t\t\t\tcurrent instanceof Canvas) {\n\t\t\thideSystemUI();\n\t\t}\n\t}\n'''
+          new = '''\t@Override\n\tpublic void onWindowFocusChanged(boolean hasFocus) {\n\t\tsuper.onWindowFocusChanged(hasFocus);\n\t\tif (hasFocus && !BuildConfig.FULL_EMULATOR) {\n\t\t\tforceImmersiveFullscreen();\n\t\t} else if (hasFocus && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && current instanceof Canvas) {\n\t\t\thideSystemUI();\n\t\t}\n\t}\n\n\tprivate void forceImmersiveFullscreen() {\n\t\tWindow window = getWindow();\n\t\tif (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {\n\t\t\tWindowInsetsController controller = window.getInsetsController();\n\t\t\tif (controller != null) {\n\t\t\t\tcontroller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());\n\t\t\t\tcontroller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);\n\t\t\t}\n\t\t} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {\n\t\t\twindow.getDecorView().setSystemUiVisibility(\n\t\t\t\t\tView.SYSTEM_UI_FLAG_IMMERSIVE_STICKY\n\t\t\t\t\t| View.SYSTEM_UI_FLAG_FULLSCREEN\n\t\t\t\t\t| View.SYSTEM_UI_FLAG_HIDE_NAVIGATION\n\t\t\t\t\t| View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN\n\t\t\t\t\t| View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION\n\t\t\t\t\t| View.SYSTEM_UI_FLAG_LAYOUT_STABLE);\n\t\t} else {\n\t\t\twindow.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);\n\t\t}\n\t}\n'''
+          if old not in s: raise SystemExit('MicroActivity focus block not found')
+          s = s.replace(old, new, 1)
+          old = '''\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
+          new = '''\t\tif (!microLoader.init()) {\n\t\t\tif (BuildConfig.FULL_EMULATOR) Config.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
+          if old not in s: raise SystemExit('MicroActivity fallback block not found')
           s = s.replace(old, new, 1)
           old = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
           new = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (!BuildConfig.FULL_EMULATOR || size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
-          if old not in s: raise SystemExit('MicroActivity selection block not found')
-          p.write_text(s.replace(old, new, 1))
+          if old not in s: raise SystemExit('MicroActivity MIDlet selection block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
 
           p = Path('app/src/midlet/AndroidManifest.xml')
           s = p.read_text()
@@ -100,109 +107,32 @@ jobs:
           import javax.microedition.lcdui.graphics.CanvasWrapper;
           import ru.playsoftware.j2meloader.config.ProfileModel;
 
-          /** Standalone controls: circular four-way joystick and numeric 5 key. */
           public final class StandaloneTouchControls extends VirtualKeyboard {
               private Canvas target;
               private float joyCx, joyCy, joyRadius;
               private float fiveCx, fiveCy, fiveRadius;
               private int joyKey;
               private boolean fiveDown;
-
               public StandaloneTouchControls(ProfileModel settings) { super(settings); }
               @Override public void setTarget(Canvas canvas) { target = canvas; }
-
               @Override public void resize(RectF realScreen, float l, float t, float r, float b) {
-                  float w = Math.max(1, r - l), h = Math.max(1, b - t);
-                  float size = Math.min(w, h);
-                  joyRadius = size * 0.115f;
-                  joyCx = l + size * 0.17f;
-                  joyCy = b - size * 0.17f;
-                  fiveRadius = size * 0.075f;
-                  fiveCx = r - size * 0.12f;
-                  fiveCy = b - size * 0.12f;
+                  float w=Math.max(1,r-l), h=Math.max(1,b-t), size=Math.min(w,h);
+                  joyRadius=size*.115f; joyCx=l+size*.17f; joyCy=b-size*.17f;
+                  fiveRadius=size*.075f; fiveCx=r-size*.12f; fiveCy=b-size*.12f;
               }
-
-              private boolean inJoy(float x, float y) {
-                  float dx = x - joyCx, dy = y - joyCy;
-                  return dx * dx + dy * dy <= joyRadius * joyRadius;
-              }
-              private boolean inFive(float x, float y) {
-                  float dx = x - fiveCx, dy = y - fiveCy;
-                  return dx * dx + dy * dy <= fiveRadius * fiveRadius;
-              }
-              private int direction(float x, float y) {
-                  float dx = x - joyCx, dy = y - joyCy;
-                  float dead = joyRadius * 0.28f;
-                  if (dx * dx + dy * dy <= dead * dead) return 0;
-                  return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? Canvas.KEY_LEFT : Canvas.KEY_RIGHT)
-                          : (dy < 0 ? Canvas.KEY_UP : Canvas.KEY_DOWN);
-              }
-              private void setJoy(int key) {
-                  if (target == null || key == joyKey) return;
-                  if (joyKey != 0) target.postKeyReleased(joyKey);
-                  joyKey = key;
-                  if (joyKey != 0) target.postKeyPressed(joyKey);
-              }
-              @Override public boolean pointerPressed(int pointer, float x, float y) {
-                  if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-                  if (inFive(x, y)) {
-                      if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-                      fiveDown = true;
-                      return true;
-                  }
-                  return false;
-              }
-              @Override public boolean pointerDragged(int pointer, float x, float y) {
-                  if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-                  if (joyKey != 0) setJoy(0);
-                  if (inFive(x, y)) {
-                      if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-                      fiveDown = true;
-                      return true;
-                  }
-                  return true;
-              }
-              @Override public boolean pointerReleased(int pointer, float x, float y) {
-                  setJoy(0);
-                  if (fiveDown && target != null) target.postKeyReleased(Canvas.KEY_NUM5);
-                  fiveDown = false;
-                  return true;
-              }
-              @Override public boolean keyPressed(int keyCode) { return false; }
-              @Override public boolean keyRepeated(int keyCode) { return false; }
-              @Override public boolean keyReleased(int keyCode) { return false; }
-
-              @Override public void paint(CanvasWrapper g) {
-                  if (target == null) return;
-                  float r = joyRadius;
-                  RectF joy = new RectF(joyCx-r, joyCy-r, joyCx+r, joyCy+r);
-                  g.setFillColor(0x66000000);
-                  g.fillArc(joy, 0, 360);
-                  g.setDrawColor(0xCCFFFFFF);
-                  g.drawArc(joy, 0, 360);
-
-                  float k = r * 0.43f, kx = joyCx, ky = joyCy;
-                  if (joyKey == Canvas.KEY_LEFT) kx -= r * .34f;
-                  else if (joyKey == Canvas.KEY_RIGHT) kx += r * .34f;
-                  else if (joyKey == Canvas.KEY_UP) ky -= r * .34f;
-                  else if (joyKey == Canvas.KEY_DOWN) ky += r * .34f;
-                  RectF knob = new RectF(kx-k, ky-k, kx+k, ky+k);
-                  g.setFillColor(0xBBFFFFFF);
-                  g.fillArc(knob, 0, 360);
-
-                  float f = fiveRadius;
-                  RectF five = new RectF(fiveCx-f, fiveCy-f, fiveCx+f, fiveCy+f);
-                  g.setFillColor(fiveDown ? 0xCCFFFFFF : 0x88000000);
-                  g.fillArc(five, 0, 360);
-                  g.setDrawColor(0xCCFFFFFF);
-                  g.drawArc(five, 0, 360);
-                  g.setTextAlign(Paint.Align.CENTER);
-                  g.setTextColor(fiveDown ? 0xFF000000 : 0xFFFFFFFF);
-                  g.drawString("5", fiveCx, fiveCy);
-              }
+              private boolean inJoy(float x,float y){float dx=x-joyCx,dy=y-joyCy;return dx*dx+dy*dy<=joyRadius*joyRadius;}
+              private boolean inFive(float x,float y){float dx=x-fiveCx,dy=y-fiveCy;return dx*dx+dy*dy<=fiveRadius*fiveRadius;}
+              private int direction(float x,float y){float dx=x-joyCx,dy=y-joyCy,dead=joyRadius*.28f;if(dx*dx+dy*dy<=dead*dead)return 0;return Math.abs(dx)>Math.abs(dy)?(dx<0?Canvas.KEY_LEFT:Canvas.KEY_RIGHT):(dy<0?Canvas.KEY_UP:Canvas.KEY_DOWN);}
+              private void setJoy(int key){if(target==null||key==joyKey)return;if(joyKey!=0)target.postKeyReleased(joyKey);joyKey=key;if(joyKey!=0)target.postKeyPressed(joyKey);}
+              @Override public boolean pointerPressed(int p,float x,float y){if(inJoy(x,y)){setJoy(direction(x,y));return true;}if(inFive(x,y)){if(!fiveDown&&target!=null)target.postKeyPressed(Canvas.KEY_NUM5);fiveDown=true;return true;}return false;}
+              @Override public boolean pointerDragged(int p,float x,float y){if(inJoy(x,y)){setJoy(direction(x,y));return true;}if(joyKey!=0)setJoy(0);if(inFive(x,y)){if(!fiveDown&&target!=null)target.postKeyPressed(Canvas.KEY_NUM5);fiveDown=true;return true;}return true;}
+              @Override public boolean pointerReleased(int p,float x,float y){setJoy(0);if(fiveDown&&target!=null)target.postKeyReleased(Canvas.KEY_NUM5);fiveDown=false;return true;}
+              @Override public boolean keyPressed(int k){return false;} @Override public boolean keyRepeated(int k){return false;} @Override public boolean keyReleased(int k){return false;}
+              @Override public void paint(CanvasWrapper g){if(target==null)return;float r=joyRadius;RectF joy=new RectF(joyCx-r,joyCy-r,joyCx+r,joyCy+r);g.setFillColor(0x66000000);g.fillArc(joy,0,360);g.setDrawColor(0xCCFFFFFF);g.drawArc(joy,0,360);float k=r*.43f,kx=joyCx,ky=joyCy;if(joyKey==Canvas.KEY_LEFT)kx-=r*.34f;else if(joyKey==Canvas.KEY_RIGHT)kx+=r*.34f;else if(joyKey==Canvas.KEY_UP)ky-=r*.34f;else if(joyKey==Canvas.KEY_DOWN)ky+=r*.34f;RectF knob=new RectF(kx-k,ky-k,kx+k,ky+k);g.setFillColor(0xBBFFFFFF);g.fillArc(knob,0,360);float f=fiveRadius;RectF five=new RectF(fiveCx-f,fiveCy-f,fiveCx+f,fiveCy+f);g.setFillColor(fiveDown?0xCCFFFFFF:0x88000000);g.fillArc(five,0,360);g.setDrawColor(0xCCFFFFFF);g.drawArc(five,0,360);g.setTextAlign(Paint.Align.CENTER);g.setTextColor(fiveDown?0xFF000000:0xFFFFFFFF);g.drawString("5",fiveCx,fiveCy);}
           }
           JAVA
 
+          test -f app/src/main/java/javax/microedition/shell/MicroActivity.java
           test -f app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
           test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           test -f app/src/midlet/libs/game.jar
