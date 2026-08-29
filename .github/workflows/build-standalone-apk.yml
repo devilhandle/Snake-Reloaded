@@ -1,0 +1,160 @@
+name: Build Standalone Android APK
+
+on:
+  push:
+    paths:
+      - '*.jar'
+      - '.github/workflows/build-standalone-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout game
+        uses: actions/checkout@v4
+
+      - name: Find and validate JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR="$(find . -maxdepth 1 -type f -iname '*.jar' -print -quit)"
+          test -n "$JAR"
+          echo "GAME_JAR=$JAR" >> "$GITHUB_ENV"
+          echo "Using JAR: $JAR"
+          unzip -p "$JAR" META-INF/MANIFEST.MF > /tmp/MANIFEST.MF
+          echo '--- MIDlet manifest ---'
+          cat /tmp/MANIFEST.MF
+          MIDLET1="$(grep -i '^MIDlet-1:' /tmp/MANIFEST.MF | head -1 | sed 's/^[^:]*:[[:space:]]*//')"
+          MIDLET_CLASS="$(printf '%s' "$MIDLET1" | awk -F',' '{gsub(/^ +| +$/, "", $NF); print $NF}')"
+          test -n "$MIDLET_CLASS"
+          echo "MIDLET_CLASS=$MIDLET_CLASS" >> "$GITHUB_ENV"
+          echo "MIDlet class: $MIDLET_CLASS"
+          echo '--- JAR entries ---'
+          unzip -l "$JAR" | tail -n +4 | head -80
+
+      - name: Clone J2ME runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/nikita36078/J2ME-Loader.git runtime
+          mkdir -p runtime/app/src/midlet/libs runtime/app/src/midlet/resources/MIDLET-META-INF
+          cp "$GAME_JAR" runtime/app/src/midlet/libs/game.jar
+          cp /tmp/MANIFEST.MF runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+
+      - name: Configure true standalone MIDlet runtime
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Add the game bytecode to the standalone midlet variant.
+          p = Path('app/build.gradle')
+          s = p.read_text()
+          if "src/midlet/libs/game.jar" not in s:
+              s = s.replace("dependencies {\n", "dependencies {\n    implementation files('src/midlet/libs/game.jar')\n", 1)
+
+          # Never require the upstream project's private release keystore for our debug APK.
+          s = re.sub(r'\n\s*signingConfigs\s*\{.*?\n\s*\}\n\s*\n\s*buildTypes', '\n\n    buildTypes', s, count=1, flags=re.S)
+          s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
+          p.write_text(s)
+
+          # MicroLoader: in the standalone flavor create an in-memory/default profile
+          # instead of looking for an installed J2ME Loader profile. This removes the
+          # launcher fallback and fixes the 240x320/portrait/fullscreen configuration.
+          p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
+          s = p.read_text()
+          old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
+          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) {\n\t\t\t\treturn false;\n\t\t\t}\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = false;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
+          if old not in s:
+              raise SystemExit('MicroLoader init block not found; upstream changed')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # MicroActivity: never fall back to Config.startApp() in standalone mode and
+          # never show a MIDlet selection dialog. Start MIDlet-1 directly.
+          p = Path('app/src/main/java/javax/microedition/shell/MicroActivity.java')
+          s = p.read_text()
+          old = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
+          new = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\t}\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
+          if old not in s:
+              raise SystemExit('MicroActivity init block not found; upstream changed')
+          s = s.replace(old, new, 1)
+
+          old = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
+          new = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (!BuildConfig.FULL_EMULATOR || size == 1) {\n\t\t\t// Standalone APK: MIDlet-1 is the only entry point. Never show the emulator selector.\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
+          if old not in s:
+              raise SystemExit('MicroActivity MIDlet selection block not found; upstream changed')
+          s = s.replace(old, new, 1)
+
+          # Standalone app must not offer an emulator/settings action from the exit dialog.
+          old = '''\t\talertBuilder.setTitle(R.string.CONFIRMATION_REQUIRED)\n\t\t\t.setMessage(R.string.FORCE_CLOSE_CONFIRMATION)\n\t\t\t.setPositiveButton(android.R.string.ok, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNeutralButton(R.string.action_settings, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tConfig.startApp(this, appName, appPath, true);\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNegativeButton(android.R.string.cancel, null);\n'''
+          new = '''\t\talertBuilder.setTitle(R.string.CONFIRMATION_REQUIRED)\n\t\t\t.setMessage(R.string.FORCE_CLOSE_CONFIRMATION)\n\t\t\t.setPositiveButton(android.R.string.ok, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNegativeButton(android.R.string.cancel, null);\n'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          # The upstream manifest already makes MicroActivity the launcher for the midlet flavor.
+          # Keep it, but explicitly force portrait and hide status/navigation bars in the theme.
+          mkdir -p app/src/midlet/res/values
+          cat > app/src/midlet/res/values/standalone.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="StandaloneTheme" parent="Theme.AppCompat.NoActionBar">
+                  <item name="android:windowFullscreen">true</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:windowNoTitle">true</item>
+              </style>
+          </resources>
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/midlet/AndroidManifest.xml')
+          s = p.read_text()
+          s = s.replace('<application>', '<application android:theme="@style/StandaloneTheme" android:resizeableActivity="false">', 1)
+          s = s.replace('android:exported="true"', 'android:exported="true" android:screenOrientation="portrait"', 1)
+          p.write_text(s)
+          PY
+
+      - name: Verify standalone configuration before Gradle
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "buildConfigField 'boolean', 'FULL_EMULATOR', 'false'" app/build.gradle
+          grep -q "implementation files('src/midlet/libs/game.jar')" app/build.gradle
+          ! grep -q "signingConfigs.release" app/build.gradle
+          grep -q 'android:screenOrientation="portrait"' app/src/midlet/AndroidManifest.xml
+          grep -q 'MIDlet-1:' src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          echo "Standalone preflight OK"
+
+      - name: Build standalone APK
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./gradlew --no-daemon :app:assembleMidletDebug --stacktrace
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find runtime/app/build/outputs/apk -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          mkdir -p dist
+          cp "$APK" dist/Snake-Reloaded-standalone.apk
+          ls -lh dist/Snake-Reloaded-standalone.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snake-Reloaded-standalone-APK
+          path: dist/Snake-Reloaded-standalone.apk
+          if-no-files-found: error
