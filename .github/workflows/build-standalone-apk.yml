@@ -62,8 +62,15 @@ jobs:
           marker='\t\tsetContentView(view);\n\t\tsetSupportActionBar(binding.toolbar);'
           repl=marker+'\n\t\tif (!BuildConfig.FULL_EMULATOR) {\n\t\t\t((android.view.ViewGroup) binding.getRoot()).addView(new StandaloneTouchControls(this), new android.view.ViewGroup.LayoutParams(-1,-1));\n\t\t}'
           if marker not in s: raise SystemExit('MicroActivity setup not found')
-          s=s.replace(marker,repl,1)
-          p.write_text(s)
+          p.write_text(s.replace(marker,repl,1))
+
+          # Rotate the 240x320 J2ME frame 90 degrees for the landscape device.
+          # The frame remains 240x320 internally; only the final texture mapping is rotated.
+          p=Path('app/src/main/java/javax/microedition/lcdui/Canvas.java'); s=p.read_text()
+          old='''\t\t\t\tvertex_bg.put(gl).put(gt).put(0.0f).put(0.0f);// lt\n\t\t\t\tvertex_bg.put(gl).put(gb).put(0.0f).put(  th);// lb\n\t\t\t\tvertex_bg.put(gr).put(gt).put(  tw).put(0.0f);// rt\n\t\t\t\tvertex_bg.put(gr).put(gb).put(  tw).put(  th);// rb'''
+          new='''\t\t\t\t// Standalone build is landscape while the original game is portrait (240x320).\n\t\t\t\t// Rotate the texture 90 degrees clockwise at the final render stage so the\n\t\t\t\t// game's artwork remains upright instead of being diagonally/distorted.\n\t\t\t\tvertex_bg.put(gl).put(gt).put(0.0f).put(  th);// screen LT <- source BL\n\t\t\t\tvertex_bg.put(gl).put(gb).put(  tw).put(  th);// screen LB <- source BR\n\t\t\t\tvertex_bg.put(gr).put(gt).put(0.0f).put(0.0f);// screen RT <- source TL\n\t\t\t\tvertex_bg.put(gr).put(gb).put(  tw).put(0.0f);// screen RB <- source TR'''
+          if old not in s: raise SystemExit('GL texture mapping block not found')
+          p.write_text(s.replace(old,new,1))
           PY
 
           test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
@@ -72,6 +79,7 @@ jobs:
           grep -q "StandaloneTouchControls" app/src/main/java/javax/microedition/shell/MicroActivity.java
           test -f app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java
           grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          grep -q 'source BL' app/src/main/java/javax/microedition/lcdui/Canvas.java
 
       - name: Build APK
         working-directory: runtime
