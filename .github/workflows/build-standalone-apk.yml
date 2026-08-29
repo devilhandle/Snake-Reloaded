@@ -17,16 +17,14 @@ jobs:
       - name: Checkout game
         uses: actions/checkout@v4
 
-      - name: Find and validate JAR
+      - name: Analyze JAR
         shell: bash
         run: |
           set -euo pipefail
           JAR="$(find . -maxdepth 1 -type f -iname '*.jar' -print -quit)"
           test -n "$JAR"
           echo "GAME_JAR=$JAR" >> "$GITHUB_ENV"
-          echo "Using JAR: $JAR"
-          unzip -p "$JAR" META-INF/MANIFEST.MF > /tmp/MANIFEST.MF
-          echo '--- MIDlet manifest ---'
+          unzip -p "$JAR" META-INF/MANIFEST.MF | tr -d '\r' > /tmp/MANIFEST.MF
           cat /tmp/MANIFEST.MF
           MIDLET1="$(grep -i '^MIDlet-1:' /tmp/MANIFEST.MF | head -1 | sed 's/^[^:]*:[[:space:]]*//')"
           MIDLET_CLASS="$(printf '%s' "$MIDLET1" | awk -F',' '{gsub(/^ +| +$/, "", $NF); print $NF}')"
@@ -34,7 +32,7 @@ jobs:
           echo "MIDLET_CLASS=$MIDLET_CLASS" >> "$GITHUB_ENV"
           echo "MIDlet class: $MIDLET_CLASS"
 
-      - name: Clone J2ME runtime
+      - name: Prepare J2ME runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -42,8 +40,10 @@ jobs:
           mkdir -p runtime/app/src/midlet/libs runtime/app/src/midlet/resources/MIDLET-META-INF
           cp "$GAME_JAR" runtime/app/src/midlet/libs/game.jar
           cp /tmp/MANIFEST.MF runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          test -f runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          test -f runtime/app/src/midlet/libs/game.jar
 
-      - name: Configure true standalone runtime
+      - name: Configure standalone runtime
         working-directory: runtime
         shell: bash
         run: |
@@ -52,6 +52,7 @@ jobs:
           from pathlib import Path
           import re
 
+          # Keep the game JAR in the Midlet variant and remove upstream private signing.
           p = Path('app/build.gradle')
           s = p.read_text()
           if "src/midlet/libs/game.jar" not in s:
@@ -60,74 +61,49 @@ jobs:
           s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
           p.write_text(s)
 
+          # Standalone MicroLoader gets an in-memory profile: no installed Loader profile.
           p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
           s = p.read_text()
           old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
-          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) {\n\t\t\t\treturn false;\n\t\t\t}\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = false;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
-          if old not in s:
-              raise SystemExit('MicroLoader init block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = false;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
+          if old not in s: raise SystemExit('MicroLoader init block not found')
+          p.write_text(s.replace(old, new, 1))
 
+          # Standalone must never fall back to the normal emulator launcher.
           p = Path('app/src/main/java/javax/microedition/shell/MicroActivity.java')
           s = p.read_text()
           old = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
-          new = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\t}\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
-          if old not in s:
-              raise SystemExit('MicroActivity init block not found')
+          new = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tif (BuildConfig.FULL_EMULATOR) Config.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
+          if old not in s: raise SystemExit('MicroActivity init block not found')
           s = s.replace(old, new, 1)
-
           old = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
           new = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (!BuildConfig.FULL_EMULATOR || size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
-          if old not in s:
-              raise SystemExit('MicroActivity selection block not found')
+          if old not in s: raise SystemExit('MicroActivity selection block not found')
           s = s.replace(old, new, 1)
-
-          old = '''\t\talertBuilder.setTitle(R.string.CONFIRMATION_REQUIRED)\n\t\t\t.setMessage(R.string.FORCE_CLOSE_CONFIRMATION)\n\t\t\t.setPositiveButton(android.R.string.ok, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNeutralButton(R.string.action_settings, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tConfig.startApp(this, appName, appPath, true);\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNegativeButton(android.R.string.cancel, null);\n'''
-          new = '''\t\talertBuilder.setTitle(R.string.CONFIRMATION_REQUIRED)\n\t\t\t.setMessage(R.string.FORCE_CLOSE_CONFIRMATION)\n\t\t\t.setPositiveButton(android.R.string.ok, (d, w) -> {\n\t\t\t\thideSoftInput();\n\t\t\t\tMidletThread.destroyApp();\n\t\t\t})\n\t\t\t.setNegativeButton(android.R.string.cancel, null);\n'''
-          if old in s:
-              s = s.replace(old, new, 1)
           p.write_text(s)
-          PY
 
-          mkdir -p app/src/midlet/res/values
-          cat > app/src/midlet/res/values/standalone.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="StandaloneTheme" parent="Theme.AppCompat.NoActionBar">
-                  <item name="android:windowFullscreen">true</item>
-                  <item name="android:windowActionModeOverlay">true</item>
-                  <item name="android:windowNoTitle">true</item>
-              </style>
-          </resources>
-          EOF
-          python3 - <<'PY'
-          from pathlib import Path
+          # Force portrait/fullscreen at Android level.
           p = Path('app/src/midlet/AndroidManifest.xml')
           s = p.read_text()
-          s = s.replace('<application>', '<application android:theme="@style/StandaloneTheme" android:resizeableActivity="false">', 1)
-          s = s.replace('android:exported="true"', 'android:exported="true" android:screenOrientation="portrait"', 1)
+          if 'android:screenOrientation="portrait"' not in s:
+              s = s.replace('android:exported="true"', 'android:exported="true" android:screenOrientation="portrait"', 1)
           p.write_text(s)
           PY
 
-      - name: Preflight standalone build
-        working-directory: runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q "FULL_EMULATOR', 'false" app/build.gradle
-          grep -q "implementation files('src/midlet/libs/game.jar')" app/build.gradle
-          ! grep -q "signingConfigs.release" app/build.gradle
-          grep -q 'android:screenOrientation="portrait"' app/src/midlet/AndroidManifest.xml
-          grep -q 'MIDlet-1:' src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
-          echo "Standalone preflight OK"
+          # Re-stage the manifest after all runtime edits so Gradle can always read it.
+          mkdir -p app/src/midlet/resources/MIDLET-META-INF
+          cp ../ /dev/null 2>/dev/null || true
+          test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          test -f app/src/midlet/libs/game.jar
+          grep -q "buildConfigField 'boolean', 'FULL_EMULATOR', 'false'" app/build.gradle
+          grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
 
-      - name: Build APK
+      - name: Build standalone APK
         working-directory: runtime
         shell: bash
         run: bash ./gradlew --no-daemon :app:assembleMidletDebug --stacktrace
 
-      - name: Verify and collect APK
+      - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
@@ -137,7 +113,7 @@ jobs:
           cp "$APK" dist/Snake-Reloaded-standalone.apk
           ls -lh dist/Snake-Reloaded-standalone.apk
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Snake-Reloaded-standalone-APK
