@@ -5,7 +5,6 @@ on:
     paths:
       - '*.jar'
       - '.github/workflows/build-standalone-apk.yml'
-      - 'standalone/StandaloneTouchControls.java'
   workflow_dispatch:
 
 permissions:
@@ -41,11 +40,8 @@ jobs:
           mkdir -p runtime/app/src/midlet/libs runtime/app/src/midlet/resources/MIDLET-META-INF
           cp "$GAME_JAR" runtime/app/src/midlet/libs/game.jar
           cp /tmp/MANIFEST.MF runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
-          cp standalone/StandaloneTouchControls.java runtime/app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
-          test -f runtime/app/src/midlet/libs/game.jar
-          test -f runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
 
-      - name: Configure standalone runtime
+      - name: Configure standalone runtime and controls
         working-directory: runtime
         shell: bash
         run: |
@@ -54,7 +50,7 @@ jobs:
           from pathlib import Path
           import re
 
-          # Embed the game JAR in the Midlet flavor and use debug signing only.
+          # Embed the game JAR and remove release-keystore requirements.
           p = Path('app/build.gradle')
           s = p.read_text()
           if "src/midlet/libs/game.jar" not in s:
@@ -63,22 +59,19 @@ jobs:
           s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
           p.write_text(s)
 
-          # Standalone profile: no installed Loader profile, fixed 240x320 portrait fullscreen.
+          # Standalone runtime: no Loader profile and no emulator fallback.
           p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
           s = p.read_text()
           old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
           new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = true;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
           if old not in s: raise SystemExit('MicroLoader init block not found')
-          p.write_text(s.replace(old, new, 1))
-
-          # Install the custom control as the normal J2ME overlay, so touch events are routed by Canvas.
+          s = s.replace(old, new, 1)
           old = 'ContextHolder.setVk(new VirtualKeyboard(params));'
           new = 'ContextHolder.setVk(BuildConfig.FULL_EMULATOR ? new VirtualKeyboard(params) : new javax.microedition.lcdui.keyboard.StandaloneTouchControls(params));'
-          s = p.read_text()
           if old not in s: raise SystemExit('VirtualKeyboard construction not found')
-          p.write_text(s.replace(old, new, 1))
+          s = s.replace(old, new, 1)
+          p.write_text(s)
 
-          # Standalone never falls back to the normal Loader launcher.
           p = Path('app/src/main/java/javax/microedition/shell/MicroActivity.java')
           s = p.read_text()
           old = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
@@ -90,13 +83,125 @@ jobs:
           if old not in s: raise SystemExit('MicroActivity selection block not found')
           p.write_text(s.replace(old, new, 1))
 
-          # Keep Android portrait lock.
           p = Path('app/src/midlet/AndroidManifest.xml')
           s = p.read_text()
           if 'android:screenOrientation="portrait"' not in s:
               s = s.replace('android:exported="true"', 'android:exported="true" android:screenOrientation="portrait"', 1)
           p.write_text(s)
           PY
+
+          mkdir -p app/src/main/java/javax/microedition/lcdui/keyboard
+          cat > app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java <<'JAVA'
+          package javax.microedition.lcdui.keyboard;
+
+          import android.graphics.Paint;
+          import android.graphics.RectF;
+          import javax.microedition.lcdui.Canvas;
+          import javax.microedition.lcdui.graphics.CanvasWrapper;
+          import ru.playsoftware.j2meloader.config.ProfileModel;
+
+          /** Standalone controls: circular four-way joystick and numeric 5 key. */
+          public final class StandaloneTouchControls extends VirtualKeyboard {
+              private Canvas target;
+              private float joyCx, joyCy, joyRadius;
+              private float fiveCx, fiveCy, fiveRadius;
+              private int joyKey;
+              private boolean fiveDown;
+
+              public StandaloneTouchControls(ProfileModel settings) { super(settings); }
+              @Override public void setTarget(Canvas canvas) { target = canvas; }
+
+              @Override public void resize(RectF realScreen, float l, float t, float r, float b) {
+                  float w = Math.max(1, r - l), h = Math.max(1, b - t);
+                  float size = Math.min(w, h);
+                  joyRadius = size * 0.115f;
+                  joyCx = l + size * 0.17f;
+                  joyCy = b - size * 0.17f;
+                  fiveRadius = size * 0.075f;
+                  fiveCx = r - size * 0.12f;
+                  fiveCy = b - size * 0.12f;
+              }
+
+              private boolean inJoy(float x, float y) {
+                  float dx = x - joyCx, dy = y - joyCy;
+                  return dx * dx + dy * dy <= joyRadius * joyRadius;
+              }
+              private boolean inFive(float x, float y) {
+                  float dx = x - fiveCx, dy = y - fiveCy;
+                  return dx * dx + dy * dy <= fiveRadius * fiveRadius;
+              }
+              private int direction(float x, float y) {
+                  float dx = x - joyCx, dy = y - joyCy;
+                  float dead = joyRadius * 0.28f;
+                  if (dx * dx + dy * dy <= dead * dead) return 0;
+                  return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? Canvas.KEY_LEFT : Canvas.KEY_RIGHT)
+                          : (dy < 0 ? Canvas.KEY_UP : Canvas.KEY_DOWN);
+              }
+              private void setJoy(int key) {
+                  if (target == null || key == joyKey) return;
+                  if (joyKey != 0) target.postKeyReleased(joyKey);
+                  joyKey = key;
+                  if (joyKey != 0) target.postKeyPressed(joyKey);
+              }
+              @Override public boolean pointerPressed(int pointer, float x, float y) {
+                  if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
+                  if (inFive(x, y)) {
+                      if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
+                      fiveDown = true;
+                      return true;
+                  }
+                  return false;
+              }
+              @Override public boolean pointerDragged(int pointer, float x, float y) {
+                  if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
+                  if (joyKey != 0) setJoy(0);
+                  if (inFive(x, y)) {
+                      if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
+                      fiveDown = true;
+                      return true;
+                  }
+                  return true;
+              }
+              @Override public boolean pointerReleased(int pointer, float x, float y) {
+                  setJoy(0);
+                  if (fiveDown && target != null) target.postKeyReleased(Canvas.KEY_NUM5);
+                  fiveDown = false;
+                  return true;
+              }
+              @Override public boolean keyPressed(int keyCode) { return false; }
+              @Override public boolean keyRepeated(int keyCode) { return false; }
+              @Override public boolean keyReleased(int keyCode) { return false; }
+
+              @Override public void paint(CanvasWrapper g) {
+                  if (target == null) return;
+                  float r = joyRadius;
+                  RectF joy = new RectF(joyCx-r, joyCy-r, joyCx+r, joyCy+r);
+                  g.setFillColor(0x66000000);
+                  g.fillArc(joy, 0, 360);
+                  g.setDrawColor(0xCCFFFFFF);
+                  g.drawArc(joy, 0, 360);
+
+                  float k = r * 0.43f, kx = joyCx, ky = joyCy;
+                  if (joyKey == Canvas.KEY_LEFT) kx -= r * .34f;
+                  else if (joyKey == Canvas.KEY_RIGHT) kx += r * .34f;
+                  else if (joyKey == Canvas.KEY_UP) ky -= r * .34f;
+                  else if (joyKey == Canvas.KEY_DOWN) ky += r * .34f;
+                  RectF knob = new RectF(kx-k, ky-k, kx+k, ky+k);
+                  g.setFillColor(0xBBFFFFFF);
+                  g.fillArc(knob, 0, 360);
+
+                  float f = fiveRadius;
+                  RectF five = new RectF(fiveCx-f, fiveCy-f, fiveCx+f, fiveCy+f);
+                  g.setFillColor(fiveDown ? 0xCCFFFFFF : 0x88000000);
+                  g.fillArc(five, 0, 360);
+                  g.setDrawColor(0xCCFFFFFF);
+                  g.drawArc(five, 0, 360);
+                  g.setTextAlign(Paint.Align.CENTER);
+                  g.setTextColor(fiveDown ? 0xFF000000 : 0xFFFFFFFF);
+                  g.drawString("5", fiveCx, fiveCy);
+              }
+          }
+          JAVA
 
           test -f app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
           test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
@@ -109,7 +214,7 @@ jobs:
         shell: bash
         run: bash ./gradlew --no-daemon :app:assembleMidletDebug --stacktrace
 
-      - name: Verify APK
+      - name: Verify and stage APK
         shell: bash
         run: |
           set -euo pipefail
@@ -117,6 +222,7 @@ jobs:
           test -n "$APK"
           mkdir -p dist
           cp "$APK" dist/Snake-Reloaded-standalone.apk
+          test -s dist/Snake-Reloaded-standalone.apk
           ls -lh dist/Snake-Reloaded-standalone.apk
 
       - name: Upload APK
