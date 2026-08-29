@@ -43,7 +43,7 @@ jobs:
           test -f runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           test -f runtime/app/src/midlet/libs/game.jar
 
-      - name: Configure standalone runtime and touch controls
+      - name: Configure standalone runtime and controls
         working-directory: runtime
         shell: bash
         run: |
@@ -52,7 +52,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # Game JAR and debug signing.
           p = Path('app/build.gradle')
           s = p.read_text()
           if "src/midlet/libs/game.jar" not in s:
@@ -61,15 +60,13 @@ jobs:
           s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
           p.write_text(s)
 
-          # Standalone profile: 240x320 portrait, fullscreen, no upstream keyboard.
           p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
           s = p.read_text()
           old = '''\tpublic boolean init() {\n\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\tif (params == null) {\n\t\t\treturn false;\n\t\t}\n'''
-          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = false;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
+          new = '''\tpublic boolean init() {\n\t\tif (BuildConfig.FULL_EMULATOR) {\n\t\t\tFile config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);\n\t\t\tthis.params = ProfilesManager.loadConfig(config);\n\t\t\tif (params == null) return false;\n\t\t} else {\n\t\t\tthis.params = new ProfileModel(new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName));\n\t\t\tthis.params.screenWidth = 240;\n\t\t\tthis.params.screenHeight = 320;\n\t\t\tthis.params.screenScaleToFit = true;\n\t\t\tthis.params.screenKeepAspectRatio = true;\n\t\t\tthis.params.orientation = 2;\n\t\t\tthis.params.forceFullscreen = true;\n\t\t\tthis.params.showKeyboard = true;\n\t\t\tthis.params.touchInput = true;\n\t\t}\n'''
           if old not in s: raise SystemExit('MicroLoader init block not found')
           p.write_text(s.replace(old, new, 1))
 
-          # Never fall back to the normal J2ME Loader launcher in standalone mode.
           p = Path('app/src/main/java/javax/microedition/shell/MicroActivity.java')
           s = p.read_text()
           old = '''\t\tmicroLoader = new MicroLoader(this, appPath);\n\t\tif (!microLoader.init()) {\n\t\t\tConfig.startApp(this, appName, appPath, true, arguments);\n\t\t\tfinish();\n\t\t\treturn;\n\t\t}\n'''
@@ -80,41 +77,33 @@ jobs:
           new = '''\t\tif (size == 0) {\n\t\t\tthrow new Exception("No MIDlets found");\n\t\t} else if (!BuildConfig.FULL_EMULATOR || size == 1) {\n\t\t\tMidletThread.create(microLoader, midletsClassArray[0]);\n\t\t} else {\n\t\t\tshowMidletDialog(midletsNameArray, midletsClassArray);\n\t\t}\n'''
           if old not in s: raise SystemExit('MicroActivity selection block not found')
           s = s.replace(old, new, 1)
-
-          # Replace the upstream virtual keyboard with a compact joystick + 5 overlay.
-          old = '''\t\tVirtualKeyboard vk = ContextHolder.getVk();\n\t\tint orientation = microLoader.getOrientation();\n\t\tif (vk != null) {\n\t\t\tvk.setView(binding.overlayView);\n\t\t\tbinding.overlayView.addLayer(vk);\n\t\t\tif (vk.isPhone()) {\n\t\t\t\torientation = ORIENTATION_PORTRAIT;\n\t\t\t}\n\t\t}\n'''
-          new = '''\t\tint orientation = microLoader.getOrientation();\n\t\tif (!BuildConfig.FULL_EMULATOR) {\n\t\t\tStandaloneTouchControls controls = new StandaloneTouchControls();\n\t\t\tbinding.overlayView.addLayer(controls);\n\t\t\tbinding.overlayView.setVisibility(true);\n\t\t}\n'''
-          if old not in s: raise SystemExit('VirtualKeyboard block not found')
-          s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Add the custom touch overlay class in the same package as MicroActivity.
-          controls = Path('app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java')
-          controls.write_text(r'''package javax.microedition.shell;
+          controls = Path('app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java')
+          controls.write_text(r'''package javax.microedition.lcdui.keyboard;
 
 import android.graphics.RectF;
 import javax.microedition.lcdui.Canvas;
+import javax.microedition.lcdui.Graphics;
 import javax.microedition.lcdui.graphics.CanvasWrapper;
-import javax.microedition.lcdui.overlay.Overlay;
+import ru.playsoftware.j2meloader.config.ProfileModel;
 
-/** Compact game controls: analog-style circular joystick + numeric 5 key. */
-public final class StandaloneTouchControls implements Overlay {
+/** Standalone game controls: one circular joystick and one numeric 5 button. */
+public final class StandaloneTouchControls extends VirtualKeyboard {
     private Canvas target;
-    private RectF screen = new RectF();
     private float left, top, right, bottom;
     private float joyCx, joyCy, joyRadius;
     private float fiveCx, fiveCy, fiveRadius;
-    private int joyKey = 0;
+    private int joyKey;
     private boolean fiveDown;
-    private boolean visible = true;
+
+    public StandaloneTouchControls(ProfileModel settings) { super(settings); }
 
     @Override public void setTarget(Canvas canvas) { target = canvas; }
 
     @Override public void resize(RectF realScreen, float l, float t, float r, float b) {
-        screen.set(realScreen);
         left = l; top = t; right = r; bottom = b;
-        float w = Math.max(1, r - l);
-        float h = Math.max(1, b - t);
+        float w = Math.max(1, r - l), h = Math.max(1, b - t);
         float size = Math.min(w, h);
         joyRadius = size * 0.115f;
         joyCx = l + size * 0.17f;
@@ -125,93 +114,75 @@ public final class StandaloneTouchControls implements Overlay {
     }
 
     private boolean inJoy(float x, float y) {
-        float dx = x - joyCx, dy = y - joyCy;
-        return dx * dx + dy * dy <= joyRadius * joyRadius;
+        float dx=x-joyCx, dy=y-joyCy;
+        return dx*dx+dy*dy <= joyRadius*joyRadius;
     }
-
     private boolean inFive(float x, float y) {
-        float dx = x - fiveCx, dy = y - fiveCy;
-        return dx * dx + dy * dy <= fiveRadius * fiveRadius;
+        float dx=x-fiveCx, dy=y-fiveCy;
+        return dx*dx+dy*dy <= fiveRadius*fiveRadius;
     }
-
     private int direction(float x, float y) {
-        float dx = x - joyCx, dy = y - joyCy;
-        float d2 = dx * dx + dy * dy;
-        float dead = joyRadius * 0.28f;
-        if (d2 <= dead * dead) return 0;
-        if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? Canvas.KEY_LEFT : Canvas.KEY_RIGHT;
-        return dy < 0 ? Canvas.KEY_UP : Canvas.KEY_DOWN;
+        float dx=x-joyCx, dy=y-joyCy;
+        float dead=joyRadius*0.28f;
+        if (dx*dx+dy*dy <= dead*dead) return 0;
+        return Math.abs(dx) > Math.abs(dy) ? (dx<0 ? Canvas.KEY_LEFT : Canvas.KEY_RIGHT)
+                : (dy<0 ? Canvas.KEY_UP : Canvas.KEY_DOWN);
     }
-
     private void setJoy(int key) {
         if (target == null || key == joyKey) return;
         if (joyKey != 0) target.postKeyReleased(joyKey);
-        joyKey = key;
+        joyKey=key;
         if (joyKey != 0) target.postKeyPressed(joyKey);
     }
 
     @Override public boolean pointerPressed(int pointer, float x, float y) {
-        if (!visible) return false;
-        if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-        if (inFive(x, y)) {
-            if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-            fiveDown = true;
-            return true;
-        }
+        if (inJoy(x,y)) { setJoy(direction(x,y)); return true; }
+        if (inFive(x,y)) { if(!fiveDown && target!=null) target.postKeyPressed(Canvas.KEY_NUM5); fiveDown=true; return true; }
         return false;
     }
-
     @Override public boolean pointerDragged(int pointer, float x, float y) {
-        if (!visible) return false;
-        if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-        if (joyKey != 0) setJoy(0);
-        if (inFive(x, y)) {
-            if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-            fiveDown = true;
-            return true;
-        }
+        if (inJoy(x,y)) { setJoy(direction(x,y)); return true; }
+        if (joyKey!=0) setJoy(0);
+        if (inFive(x,y)) { if(!fiveDown && target!=null) target.postKeyPressed(Canvas.KEY_NUM5); fiveDown=true; return true; }
         return true;
     }
-
     @Override public boolean pointerReleased(int pointer, float x, float y) {
-        if (joyKey != 0) setJoy(0);
-        if (fiveDown && target != null) target.postKeyReleased(Canvas.KEY_NUM5);
-        fiveDown = false;
-        return inJoy(x, y) || inFive(x, y);
+        setJoy(0);
+        if (fiveDown && target!=null) target.postKeyReleased(Canvas.KEY_NUM5);
+        fiveDown=false;
+        return true;
     }
-
     @Override public boolean keyPressed(int keyCode) { return false; }
     @Override public boolean keyRepeated(int keyCode) { return false; }
     @Override public boolean keyReleased(int keyCode) { return false; }
-    @Override public void show() { visible = true; }
-    @Override public void hide() { visible = false; setJoy(0); if (fiveDown && target != null) target.postKeyReleased(Canvas.KEY_NUM5); fiveDown = false; }
-    @Override public void cancel() { hide(); }
-
     @Override public void paint(CanvasWrapper g) {
-        if (!visible || target == null) return;
-        float r = joyRadius;
-        // Outer joystick ring and inner thumb.
-        g.setColorAlpha(0x66000000); g.fillArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
-        g.setColorAlpha(0xAAFFFFFF); g.drawArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
-        float knob = r * 0.43f;
-        float kx = joyCx, ky = joyCy;
-        if (joyKey == Canvas.KEY_LEFT) kx -= r * 0.34f;
-        else if (joyKey == Canvas.KEY_RIGHT) kx += r * 0.34f;
-        else if (joyKey == Canvas.KEY_UP) ky -= r * 0.34f;
-        else if (joyKey == Canvas.KEY_DOWN) ky += r * 0.34f;
-        g.setColorAlpha(0xBBFFFFFF); g.fillArc((int)(kx-knob), (int)(ky-knob), (int)(2*knob), (int)(2*knob), 0, 360);
-
-        float f = fiveRadius;
-        g.setColorAlpha(fiveDown ? 0xCCFFFFFF : 0x88000000);
-        g.fillArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(0xCCFFFFFF); g.drawArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(fiveDown ? 0xFF000000 : 0xFFFFFFFF);
-        g.drawString("5", (int)fiveCx, (int)fiveCy, javax.microedition.lcdui.Graphics.HCENTER | javax.microedition.lcdui.Graphics.VCENTER);
+        if (target==null) return;
+        float r=joyRadius;
+        g.setColorAlpha(0x66000000); g.fillArc((int)(joyCx-r),(int)(joyCy-r),(int)(2*r),(int)(2*r),0,360);
+        g.setColorAlpha(0xCCFFFFFF); g.drawArc((int)(joyCx-r),(int)(joyCy-r),(int)(2*r),(int)(2*r),0,360);
+        float k=r*0.43f, kx=joyCx, ky=joyCy;
+        if(joyKey==Canvas.KEY_LEFT)kx-=r*.34f; else if(joyKey==Canvas.KEY_RIGHT)kx+=r*.34f;
+        else if(joyKey==Canvas.KEY_UP)ky-=r*.34f; else if(joyKey==Canvas.KEY_DOWN)ky+=r*.34f;
+        g.setColorAlpha(0xBBFFFFFF); g.fillArc((int)(kx-k),(int)(ky-k),(int)(2*k),(int)(2*k),0,360);
+        float f=fiveRadius;
+        g.setColorAlpha(fiveDown?0xCCFFFFFF:0x88000000); g.fillArc((int)(fiveCx-f),(int)(fiveCy-f),(int)(2*f),(int)(2*f),0,360);
+        g.setColorAlpha(0xCCFFFFFF); g.drawArc((int)(fiveCx-f),(int)(fiveCy-f),(int)(2*f),(int)(2*f),0,360);
+        g.setColorAlpha(fiveDown?0xFF000000:0xFFFFFFFF);
+        g.drawString("5",(int)fiveCx,(int)fiveCy,Graphics.HCENTER|Graphics.VCENTER);
     }
 }
 ''')
 
-          # Keep Android portrait lock.
+          # Make MicroLoader install our subclass into the normal J2ME overlay pipeline.
+          p = Path('app/src/main/java/javax/microedition/shell/MicroLoader.java')
+          s = p.read_text()
+          old = 'ContextHolder.setVk(new VirtualKeyboard(params));'
+          new = 'ContextHolder.setVk(BuildConfig.FULL_EMULATOR ? new VirtualKeyboard(params) : new javax.microedition.lcdui.keyboard.StandaloneTouchControls(params));'
+          if old not in s: raise SystemExit('VirtualKeyboard construction not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # Force portrait/fullscreen at Android level.
           p = Path('app/src/midlet/AndroidManifest.xml')
           s = p.read_text()
           if 'android:screenOrientation="portrait"' not in s:
@@ -219,10 +190,9 @@ public final class StandaloneTouchControls implements Overlay {
           p.write_text(s)
           PY
 
-          # Build-time sanity checks.
           test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           test -f app/src/midlet/libs/game.jar
-          test -f app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java
+          test -f app/src/main/java/javax/microedition/lcdui/keyboard/StandaloneTouchControls.java
           grep -q "buildConfigField 'boolean', 'FULL_EMULATOR', 'false'" app/build.gradle
           grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
 
