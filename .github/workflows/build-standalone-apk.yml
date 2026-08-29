@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p runtime/app/src/main/res/drawable
-          base64 -d standalone/icon.png.b64 > runtime/app/src/main/res/drawable/snake_game_icon.png
+          cp standalone/icon.png runtime/app/src/main/res/drawable/snake_game_icon.png
           test -s runtime/app/src/main/res/drawable/snake_game_icon.png
           python3 - <<'PY'
           from pathlib import Path
