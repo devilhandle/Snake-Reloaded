@@ -64,11 +64,12 @@ jobs:
           if marker not in s: raise SystemExit('MicroActivity setup not found')
           p.write_text(s.replace(marker,repl,1))
 
-          # Rotate the 240x320 J2ME frame 90 degrees for the landscape device.
-          # The frame remains 240x320 internally; only the final texture mapping is rotated.
+          # The game is natively portrait (240x320), but the standalone APK is forced landscape.
+          # Rotate the final texture 90 degrees counter-clockwise and center-crop it to the
+          # landscape display. This fills the whole screen without non-uniform stretching.
           p=Path('app/src/main/java/javax/microedition/lcdui/Canvas.java'); s=p.read_text()
           old='''\t\t\t\tvertex_bg.put(gl).put(gt).put(0.0f).put(0.0f);// lt\n\t\t\t\tvertex_bg.put(gl).put(gb).put(0.0f).put(  th);// lb\n\t\t\t\tvertex_bg.put(gr).put(gt).put(  tw).put(0.0f);// rt\n\t\t\t\tvertex_bg.put(gr).put(gb).put(  tw).put(  th);// rb'''
-          new='''\t\t\t\t// Standalone build is landscape while the original game is portrait (240x320).\n\t\t\t\t// Rotate the texture 90 degrees clockwise at the final render stage so the\n\t\t\t\t// game's artwork remains upright instead of being diagonally/distorted.\n\t\t\t\tvertex_bg.put(gl).put(gt).put(0.0f).put(  th);// screen LT <- source BL\n\t\t\t\tvertex_bg.put(gl).put(gb).put(  tw).put(  th);// screen LB <- source BR\n\t\t\t\tvertex_bg.put(gr).put(gt).put(0.0f).put(0.0f);// screen RT <- source TL\n\t\t\t\tvertex_bg.put(gr).put(gb).put(  tw).put(0.0f);// screen RB <- source TR'''
+          new='''\t\t\t\t// Portrait source 240x320 -> landscape output.\n\t\t\t\t// Use the opposite 90-degree direction from the previous build, then\n\t\t\t\t// center-crop the source so the aspect ratio stays natural while the\n\t\t\t\t// landscape surface remains completely filled.\n\t\t\t\tfloat dw = Math.max(1.0f, gr - gl);\n\t\t\t\tfloat dh = Math.max(1.0f, gb - gt);\n\t\t\t\tfloat dstAspect = dw / dh;\n\t\t\t\tfloat srcAspect = ((float) height) / Math.max(1.0f, (float) width);\n\t\t\t\tfloat cropU = 0.0f;\n\t\t\t\tfloat cropV = 0.0f;\n\t\t\t\tif (dstAspect > srcAspect) {\n\t\t\t\t\tcropU = 0.5f * (1.0f - srcAspect / dstAspect);\n\t\t\t\t} else if (dstAspect < srcAspect) {\n\t\t\t\t\tcropV = 0.5f * (1.0f - dstAspect / srcAspect);\n\t\t\t\t}\n\t\t\t\tfloat u0 = tw * cropU, u1 = tw * (1.0f - cropU);\n\t\t\t\tfloat v0 = th * cropV, v1 = th * (1.0f - cropV);\n\t\t\t\tvertex_bg.put(gl).put(gt).put(u1).put(v0);// lt <- source TR\n\t\t\t\tvertex_bg.put(gl).put(gb).put(u0).put(v0);// lb <- source TL\n\t\t\t\tvertex_bg.put(gr).put(gt).put(u1).put(v1);// rt <- source BR\n\t\t\t\tvertex_bg.put(gr).put(gb).put(u0).put(v1);// rb <- source BL'''
           if old not in s: raise SystemExit('GL texture mapping block not found')
           p.write_text(s.replace(old,new,1))
           PY
@@ -79,7 +80,7 @@ jobs:
           grep -q "StandaloneTouchControls" app/src/main/java/javax/microedition/shell/MicroActivity.java
           test -f app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java
           grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
-          grep -q 'source BL' app/src/main/java/javax/microedition/lcdui/Canvas.java
+          grep -q 'source TR' app/src/main/java/javax/microedition/lcdui/Canvas.java
 
       - name: Build APK
         working-directory: runtime
