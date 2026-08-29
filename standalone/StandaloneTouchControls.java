@@ -76,24 +76,11 @@ public final class StandaloneTouchControls extends View {
         canvas.drawCircle(cx - button * 1.08f, cy, button * 0.70f, paint);
         canvas.drawCircle(cx + button * 1.08f, cy, button * 0.70f, paint);
 
-        paint.setColor(0xFF000000);
-        paint.setAlpha(255);
-        paint.setTextAlign(Paint.Align.CENTER);
-        paint.setTextSize(button * 0.72f);
-        Paint.FontMetrics fm = paint.getFontMetrics();
-        float off = -(fm.ascent + fm.descent) * 0.5f;
-        canvas.drawText("↑", cx, cy - button * 1.08f + off, paint);
-        canvas.drawText("↓", cx, cy + button * 1.08f + off, paint);
-        canvas.drawText("←", cx - button * 1.08f, cy + off, paint);
-        canvas.drawText("→", cx + button * 1.08f, cy + off, paint);
-
+        // The controls intentionally have no visible arrows or labels.
+        // Touch hit areas and key mappings remain unchanged.
         paint.setColor(0xFFFFFFFF);
         paint.setAlpha(fiveDown ? 255 : 205);
         canvas.drawCircle(fiveX, fiveY, button * 0.82f, paint);
-        paint.setColor(0xFF000000);
-        paint.setAlpha(255);
-        paint.setTextSize(button * 0.65f);
-        canvas.drawText("5", fiveX, fiveY + off, paint);
     }
 
     @Override
