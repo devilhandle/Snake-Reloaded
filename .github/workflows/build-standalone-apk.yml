@@ -64,16 +64,14 @@ jobs:
           if marker not in s: raise SystemExit('MicroActivity setup not found')
           s=s.replace(marker,repl,1)
           p.write_text(s)
-
-          p=Path('app/src/main/res/layout/activity_micro.xml')
-          if p.exists(): p.write_text(p.read_text())
           PY
 
+          test -f app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           grep -q "screenScaleType=2" app/src/main/java/javax/microedition/shell/MicroLoader.java
           grep -q "orientation=3" app/src/main/java/javax/microedition/shell/MicroLoader.java
           grep -q "StandaloneTouchControls" app/src/main/java/javax/microedition/shell/MicroActivity.java
           test -f app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java
-          grep -q 'MIDlet-1:' app/src/main/midlet/resources/MIDLET-META-INF/MANIFEST.MF
+          grep -q 'MIDlet-1:' app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
 
       - name: Build APK
         working-directory: runtime
