@@ -3,13 +3,31 @@ import re
 
 root = Path('runtime')
 
-# Add the game JAR as a dependency and remove release-signing requirements.
+# Add the game JAR as a dependency and make the standalone debug build
+# independent from J2ME-Loader's release keystore configuration.
 p = root / 'app/build.gradle'
 s = p.read_text()
 if "src/midlet/libs/game.jar" not in s:
     s = s.replace("dependencies {\n", "dependencies {\n    implementation files('src/midlet/libs/game.jar')\n", 1)
-s = re.sub(r'\n\s*signingConfigs\s*\{.*?\n\s*\}\n\s*\nbuildTypes', '\n\n    buildTypes', s, count=1, flags=re.S)
-s = re.sub(r'\n\s*signingConfig\s+signingConfigs\.release', '', s)
+
+# The upstream project defines a release signingConfig that expects a local
+# keystore.properties file.  A standalone debug APK does not need it, but
+# Gradle still evaluates the signingConfigs block. Remove that entire block
+# and the release signingConfig reference so CI never depends on a secret
+# or missing local keystore.
+s = re.sub(
+    r'\n\s*signingConfigs\s*\{\s*release\s*\{.*?\n\s*\}\s*\}\s*\n\s*(?=buildTypes\s*\{)',
+    '\n\n',
+    s,
+    count=1,
+    flags=re.S,
+)
+s = re.sub(
+    r'\n\s*signingConfig\s+signingConfigs\.release\s*',
+    '\n',
+    s,
+    count=1,
+)
 p.write_text(s)
 
 # Standalone profile: original 240x320 canvas, portrait, fullscreen.
@@ -58,5 +76,4 @@ if marker not in s:
     raise SystemExit('MicroActivity setup not found')
 p.write_text(s.replace(marker, repl, 1))
 
-# Do not modify Canvas.java: the game remains a real portrait 240x320 image.
-print('Standalone portrait fullscreen patch applied successfully.')
+print('Standalone portrait fullscreen + white D-pad patch applied successfully.')
