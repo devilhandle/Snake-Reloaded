@@ -1,112 +1,147 @@
-package javax.microedition.lcdui.keyboard;
+package javax.microedition.shell;
 
-import android.graphics.RectF;
-import javax.microedition.lcdui.Canvas;
-import javax.microedition.lcdui.Graphics;
-import javax.microedition.lcdui.graphics.CanvasWrapper;
-import ru.playsoftware.j2meloader.config.ProfileModel;
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
 
-/** Standalone controls: circular four-way joystick and numeric 5 key. */
-public final class StandaloneTouchControls extends VirtualKeyboard {
-    private Canvas target;
-    private float joyCx, joyCy, joyRadius;
-    private float fiveCx, fiveCy, fiveRadius;
-    private int joyKey;
+/** White portrait D-pad controls plus the numeric 5 key. */
+public final class StandaloneTouchControls extends View {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final float density;
+    private float cx, cy, button;
+    private float fiveX, fiveY;
+    private int activeKey;
     private boolean fiveDown;
 
-    public StandaloneTouchControls(ProfileModel settings) { super(settings); }
-
-    @Override public void setTarget(Canvas canvas) { target = canvas; }
-
-    @Override public void resize(RectF realScreen, float l, float t, float r, float b) {
-        float w = Math.max(1, r - l), h = Math.max(1, b - t);
-        float size = Math.min(w, h);
-        joyRadius = size * 0.115f;
-        joyCx = l + size * 0.17f;
-        joyCy = b - size * 0.17f;
-        fiveRadius = size * 0.075f;
-        fiveCx = r - size * 0.12f;
-        fiveCy = b - size * 0.12f;
+    public StandaloneTouchControls(Context context) {
+        super(context);
+        density = getResources().getDisplayMetrics().density;
+        setFocusable(false);
+        setClickable(true);
     }
 
-    private boolean inJoy(float x, float y) {
-        float dx = x - joyCx, dy = y - joyCy;
-        return dx * dx + dy * dy <= joyRadius * joyRadius;
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        float min = Math.min(w, h);
+        button = Math.max(30f * density, min * 0.075f);
+        cx = w * 0.18f;
+        cy = h * 0.80f;
+        fiveX = w * 0.84f;
+        fiveY = h * 0.80f;
+    }
+
+    private int directionFor(float x, float y) {
+        float dx = x - cx;
+        float dy = y - cy;
+        float reach = button * 0.92f;
+        if (Math.abs(dx) <= reach && dy <= -button * 0.18f && dy >= -button * 2.0f)
+            return KeyEvent.KEYCODE_DPAD_UP;
+        if (Math.abs(dx) <= reach && dy >= button * 0.18f && dy <= button * 2.0f)
+            return KeyEvent.KEYCODE_DPAD_DOWN;
+        if (Math.abs(dy) <= reach && dx <= -button * 0.18f && dx >= -button * 2.0f)
+            return KeyEvent.KEYCODE_DPAD_LEFT;
+        if (Math.abs(dy) <= reach && dx >= button * 0.18f && dx <= button * 2.0f)
+            return KeyEvent.KEYCODE_DPAD_RIGHT;
+        return 0;
     }
 
     private boolean inFive(float x, float y) {
-        float dx = x - fiveCx, dy = y - fiveCy;
-        return dx * dx + dy * dy <= fiveRadius * fiveRadius;
+        float r = button * 0.82f;
+        float dx = x - fiveX, dy = y - fiveY;
+        return dx * dx + dy * dy <= r * r;
     }
 
-    private int direction(float x, float y) {
-        float dx = x - joyCx, dy = y - joyCy;
-        float dead = joyRadius * 0.28f;
-        if (dx * dx + dy * dy <= dead * dead) return 0;
-        return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? Canvas.KEY_LEFT : Canvas.KEY_RIGHT)
-                : (dy < 0 ? Canvas.KEY_UP : Canvas.KEY_DOWN);
+    private void send(int action, int key) {
+        if (key != 0) getRootView().dispatchKeyEvent(new KeyEvent(action, key));
     }
 
-    private void setJoy(int key) {
-        if (target == null || key == joyKey) return;
-        if (joyKey != 0) target.postKeyReleased(joyKey);
-        joyKey = key;
-        if (joyKey != 0) target.postKeyPressed(joyKey);
+    private void releaseDirection() {
+        if (activeKey != 0) {
+            send(KeyEvent.ACTION_UP, activeKey);
+            activeKey = 0;
+        }
     }
 
-    @Override public boolean pointerPressed(int pointer, float x, float y) {
-        if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-        if (inFive(x, y)) {
-            if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-            fiveDown = true;
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFFFFFFF);
+        paint.setAlpha(205);
+        canvas.drawCircle(cx, cy - button * 1.08f, button * 0.70f, paint);
+        canvas.drawCircle(cx, cy + button * 1.08f, button * 0.70f, paint);
+        canvas.drawCircle(cx - button * 1.08f, cy, button * 0.70f, paint);
+        canvas.drawCircle(cx + button * 1.08f, cy, button * 0.70f, paint);
+
+        paint.setColor(0xFF000000);
+        paint.setAlpha(255);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(button * 0.72f);
+        Paint.FontMetrics fm = paint.getFontMetrics();
+        float off = -(fm.ascent + fm.descent) * 0.5f;
+        canvas.drawText("↑", cx, cy - button * 1.08f + off, paint);
+        canvas.drawText("↓", cx, cy + button * 1.08f + off, paint);
+        canvas.drawText("←", cx - button * 1.08f, cy + off, paint);
+        canvas.drawText("→", cx + button * 1.08f, cy + off, paint);
+
+        paint.setColor(0xFFFFFFFF);
+        paint.setAlpha(fiveDown ? 255 : 205);
+        canvas.drawCircle(fiveX, fiveY, button * 0.82f, paint);
+        paint.setColor(0xFF000000);
+        paint.setAlpha(255);
+        paint.setTextSize(button * 0.65f);
+        canvas.drawText("5", fiveX, fiveY + off, paint);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        float x = event.getX();
+        float y = event.getY();
+        int action = event.getActionMasked();
+
+        if (action == MotionEvent.ACTION_DOWN) {
+            if (inFive(x, y)) {
+                fiveDown = true;
+                send(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_5);
+                invalidate();
+                return true;
+            }
+            int key = directionFor(x, y);
+            if (key != 0) {
+                activeKey = key;
+                send(KeyEvent.ACTION_DOWN, activeKey);
+                invalidate();
+                return true;
+            }
+            return false;
+        }
+
+        if (action == MotionEvent.ACTION_MOVE) {
+            if (fiveDown) return true;
+            int key = directionFor(x, y);
+            if (key != activeKey) {
+                releaseDirection();
+                if (key != 0) {
+                    activeKey = key;
+                    send(KeyEvent.ACTION_DOWN, activeKey);
+                }
+                invalidate();
+            }
             return true;
         }
-        return false;
-    }
 
-    @Override public boolean pointerDragged(int pointer, float x, float y) {
-        if (inJoy(x, y)) { setJoy(direction(x, y)); return true; }
-        if (joyKey != 0) setJoy(0);
-        if (inFive(x, y)) {
-            if (!fiveDown && target != null) target.postKeyPressed(Canvas.KEY_NUM5);
-            fiveDown = true;
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            releaseDirection();
+            if (fiveDown) {
+                send(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_5);
+                fiveDown = false;
+            }
+            invalidate();
             return true;
         }
         return true;
-    }
-
-    @Override public boolean pointerReleased(int pointer, float x, float y) {
-        setJoy(0);
-        if (fiveDown && target != null) target.postKeyReleased(Canvas.KEY_NUM5);
-        fiveDown = false;
-        return true;
-    }
-
-    @Override public boolean keyPressed(int keyCode) { return false; }
-    @Override public boolean keyRepeated(int keyCode) { return false; }
-    @Override public boolean keyReleased(int keyCode) { return false; }
-
-    @Override public void paint(CanvasWrapper g) {
-        if (target == null) return;
-        float r = joyRadius;
-        // White joystick: translucent white base with a solid white moving knob.
-        g.setColorAlpha(0x55FFFFFF);
-        g.fillArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
-        g.setColorAlpha(0xFFFFFFFF);
-        g.drawArc((int)(joyCx-r), (int)(joyCy-r), (int)(2*r), (int)(2*r), 0, 360);
-        float k = r * 0.43f, kx = joyCx, ky = joyCy;
-        if (joyKey == Canvas.KEY_LEFT) kx -= r * .34f;
-        else if (joyKey == Canvas.KEY_RIGHT) kx += r * .34f;
-        else if (joyKey == Canvas.KEY_UP) ky -= r * .34f;
-        else if (joyKey == Canvas.KEY_DOWN) ky += r * .34f;
-        g.setColorAlpha(0xFFFFFFFF);
-        g.fillArc((int)(kx-k), (int)(ky-k), (int)(2*k), (int)(2*k), 0, 360);
-        float f = fiveRadius;
-        g.setColorAlpha(fiveDown ? 0xFFFFFFFF : 0x66FFFFFF);
-        g.fillArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(0xFFFFFFFF);
-        g.drawArc((int)(fiveCx-f), (int)(fiveCy-f), (int)(2*f), (int)(2*f), 0, 360);
-        g.setColorAlpha(0xFF000000);
-        g.drawString("5", (int)fiveCx, (int)fiveCy, Graphics.HCENTER | Graphics.VCENTER);
     }
 }
