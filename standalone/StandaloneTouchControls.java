@@ -10,7 +10,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 
-/** Two-button left/right neon HUD controls for the standalone J2ME build. */
+/** Two-button left/right controls plus a dedicated 5 key. */
 public final class StandaloneTouchControls extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -18,6 +18,7 @@ public final class StandaloneTouchControls extends View {
     private float density;
     private float buttonW, buttonH;
     private float leftX, rightX, centerY;
+    private float fiveX, fiveY, fiveSize;
     private int activeKey;
 
     public StandaloneTouchControls(Context context) {
@@ -32,12 +33,14 @@ public final class StandaloneTouchControls extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         float min = Math.min(w, h);
-        // Two large horizontal controls, inspired by the reference HUD.
         buttonW = Math.max(150f * density, min * 0.38f);
         buttonH = Math.max(58f * density, min * 0.14f);
         centerY = h - buttonH * 1.25f;
         leftX = w * 0.25f;
         rightX = w * 0.75f;
+        fiveSize = buttonH * 0.78f;
+        fiveX = rightX + buttonW * 0.30f;
+        fiveY = centerY - buttonH * 1.25f;
     }
 
     private boolean inside(float x, float y, float cx) {
@@ -47,7 +50,14 @@ public final class StandaloneTouchControls extends View {
                 && y >= centerY - halfH && y <= centerY + halfH;
     }
 
+    private boolean insideFive(float x, float y) {
+        float half = fiveSize * 0.50f;
+        return x >= fiveX - half && x <= fiveX + half
+                && y >= fiveY - half && y <= fiveY + half;
+    }
+
     private int keyAt(float x, float y) {
+        if (insideFive(x, y)) return KeyEvent.KEYCODE_5;
         if (inside(x, y, leftX)) return KeyEvent.KEYCODE_DPAD_LEFT;
         if (inside(x, y, rightX)) return KeyEvent.KEYCODE_DPAD_RIGHT;
         return 0;
@@ -71,7 +81,6 @@ public final class StandaloneTouchControls extends View {
         float b = centerY + buttonH * 0.5f;
         float radius = buttonH * 0.22f;
 
-        // Deep transparent futuristic panel.
         fill.setStyle(Paint.Style.FILL);
         fill.setShader(new LinearGradient(0, t, 0, b,
                 pressed ? 0xCC3F8397 : 0x99456A76,
@@ -79,12 +88,10 @@ public final class StandaloneTouchControls extends View {
         canvas.drawRoundRect(l, t, r, b, radius, radius, fill);
         fill.setShader(null);
 
-        // Dark inner glass.
         fill.setColor(pressed ? 0xAA46B9D3 : 0x7720394A);
         canvas.drawRoundRect(l + 5, t + 5, r - 5, b - 5,
                 radius * 0.78f, radius * 0.78f, fill);
 
-        // Bright cyan outer frame and purple inner frame.
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth(Math.max(2f, density * 2.2f));
         stroke.setColor(pressed ? 0xFFFFFFFF : 0xFF63EFFF);
@@ -99,7 +106,6 @@ public final class StandaloneTouchControls extends View {
         canvas.drawRoundRect(l + 6, t + 6, r - 6, b - 6,
                 radius * 0.78f, radius * 0.78f, stroke);
 
-        // Subtle horizontal scan lines.
         stroke.setStrokeWidth(Math.max(1f, density));
         stroke.setColor(0x5562E8FF);
         for (int i = 1; i < 5; i++) {
@@ -122,7 +128,6 @@ public final class StandaloneTouchControls extends View {
             arrow.lineTo(cx + head * 0.55f, centerY + shaft * 0.42f);
             arrow.lineTo(cx - shaft * 0.10f, centerY + shaft * 0.42f);
             arrow.lineTo(cx - shaft * 0.10f, centerY + s);
-            arrow.close();
         } else {
             arrow.moveTo(cx + head, centerY);
             arrow.lineTo(cx + shaft * 0.10f, centerY - s);
@@ -131,8 +136,8 @@ public final class StandaloneTouchControls extends View {
             arrow.lineTo(cx - head * 0.55f, centerY + shaft * 0.42f);
             arrow.lineTo(cx + shaft * 0.10f, centerY + shaft * 0.42f);
             arrow.lineTo(cx + shaft * 0.10f, centerY + s);
-            arrow.close();
         }
+        arrow.close();
 
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth(Math.max(2.5f, density * 2.8f));
@@ -148,16 +153,51 @@ public final class StandaloneTouchControls extends View {
         canvas.drawPath(arrow, fill);
     }
 
+    private void drawFive(Canvas canvas, boolean pressed) {
+        float half = fiveSize * 0.50f;
+        float l = fiveX - half;
+        float t = fiveY - half;
+        float r = fiveX + half;
+        float b = fiveY + half;
+        float radius = fiveSize * 0.16f;
+
+        fill.setStyle(Paint.Style.FILL);
+        fill.setShader(new LinearGradient(0, t, 0, b,
+                pressed ? 0xFFE6F2A0 : 0xCCB7D56A,
+                pressed ? 0xFF657C36 : 0x884B602B, Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(l, t, r, b, radius, radius, fill);
+        fill.setShader(null);
+
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(Math.max(2f, density * 2f));
+        stroke.setColor(pressed ? 0xFFFFFFFF : 0xFFE5FF91);
+        stroke.setShadowLayer(pressed ? 8f * density : 4f * density,
+                0, 0, 0xAAE8FF65);
+        setLayerType(View.LAYER_TYPE_SOFTWARE, stroke);
+        canvas.drawRoundRect(l + 1, t + 1, r - 1, b - 1, radius, radius, stroke);
+        stroke.clearShadowLayer();
+
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(pressed ? 0xFFFFFFFF : 0xFFF4F7D0);
+        fill.setTextSize(fiveSize * 0.58f);
+        fill.setTextAlign(Paint.Align.CENTER);
+        Paint.FontMetrics fm = fill.getFontMetrics();
+        float baseline = fiveY - (fm.ascent + fm.descent) * 0.5f;
+        canvas.drawText("5", fiveX, baseline, fill);
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         boolean left = activeKey == KeyEvent.KEYCODE_DPAD_LEFT;
         boolean right = activeKey == KeyEvent.KEYCODE_DPAD_RIGHT;
+        boolean five = activeKey == KeyEvent.KEYCODE_5;
 
         roundedButton(canvas, leftX, left);
         roundedButton(canvas, rightX, right);
         drawArrow(canvas, leftX, KeyEvent.KEYCODE_DPAD_LEFT, left);
         drawArrow(canvas, rightX, KeyEvent.KEYCODE_DPAD_RIGHT, right);
+        drawFive(canvas, five);
     }
 
     @Override
