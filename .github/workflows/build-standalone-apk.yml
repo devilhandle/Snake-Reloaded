@@ -74,3 +74,5 @@ jobs:
           name: Snake-Reloaded-standalone-APK
           path: dist/Snake-Reloaded-standalone.apk
           if-no-files-found: error
+
+# Rebuild after the exact uploaded icon was installed.
