@@ -31,13 +31,14 @@ jobs:
           cp /tmp/MANIFEST.MF runtime/app/src/midlet/resources/MIDLET-META-INF/MANIFEST.MF
           cp standalone/StandaloneTouchControls.java runtime/app/src/main/java/javax/microedition/shell/StandaloneTouchControls.java
 
-      - name: Install requested game icon
+      - name: Install exact S launcher icon in mipmap
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p runtime/app/src/main/res/drawable
-          cp standalone/icon.png runtime/app/src/main/res/drawable/snake_game_icon.png
-          test -s runtime/app/src/main/res/drawable/snake_game_icon.png
+          mkdir -p runtime/app/src/main/res/mipmap-mdpi
+          base64 -d standalone/icon_mdpi.b64 > runtime/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          test -s runtime/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          file runtime/app/src/main/res/mipmap-mdpi/ic_launcher.png
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -47,7 +48,7 @@ jobs:
           if not m:
               raise SystemExit('AndroidManifest.xml: <application> tag not found')
           attrs = re.sub(r'\s+android:(?:roundIcon|icon)\s*=\s*"[^"]*"', '', m.group(1))
-          attrs = ' android:icon="@drawable/snake_game_icon" android:roundIcon="@drawable/snake_game_icon"' + attrs
+          attrs = ' android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"' + attrs
           s = s[:m.start(1)] + attrs + s[m.end(1):]
           p.write_text(s)
           PY
@@ -74,5 +75,3 @@ jobs:
           name: Snake-Reloaded-standalone-APK
           path: dist/Snake-Reloaded-standalone.apk
           if-no-files-found: error
-
-# Rebuild after the exact uploaded icon was installed.
