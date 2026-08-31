@@ -10,14 +10,14 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 
-/** Four-key neon HUD controls for the standalone J2ME build. */
+/** Two-button left/right neon HUD controls for the standalone J2ME build. */
 public final class StandaloneTouchControls extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path arrow = new Path();
     private float density;
     private float buttonW, buttonH;
-    private float leftX, rightX, centerX, upY, downY, sideY;
+    private float leftX, rightX, centerY;
     private int activeKey;
 
     public StandaloneTouchControls(Context context) {
@@ -32,28 +32,24 @@ public final class StandaloneTouchControls extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         float min = Math.min(w, h);
-        buttonW = Math.max(92f * density, min * 0.25f);
-        buttonH = Math.max(48f * density, min * 0.105f);
-        sideY = h - buttonH * 1.55f;
-        centerX = w * 0.50f;
-        leftX = w * 0.18f;
-        rightX = w * 0.82f;
-        upY = sideY - buttonH * 0.72f;
-        downY = sideY + buttonH * 0.72f;
+        // Two large horizontal controls, inspired by the reference HUD.
+        buttonW = Math.max(150f * density, min * 0.38f);
+        buttonH = Math.max(58f * density, min * 0.14f);
+        centerY = h - buttonH * 1.25f;
+        leftX = w * 0.25f;
+        rightX = w * 0.75f;
     }
 
-    private boolean inside(float x, float y, float cx, float cy) {
+    private boolean inside(float x, float y, float cx) {
         float halfW = buttonW * 0.50f;
         float halfH = buttonH * 0.50f;
         return x >= cx - halfW && x <= cx + halfW
-                && y >= cy - halfH && y <= cy + halfH;
+                && y >= centerY - halfH && y <= centerY + halfH;
     }
 
     private int keyAt(float x, float y) {
-        if (inside(x, y, centerX, upY)) return KeyEvent.KEYCODE_DPAD_UP;
-        if (inside(x, y, centerX, downY)) return KeyEvent.KEYCODE_DPAD_DOWN;
-        if (inside(x, y, leftX, sideY)) return KeyEvent.KEYCODE_DPAD_LEFT;
-        if (inside(x, y, rightX, sideY)) return KeyEvent.KEYCODE_DPAD_RIGHT;
+        if (inside(x, y, leftX)) return KeyEvent.KEYCODE_DPAD_LEFT;
+        if (inside(x, y, rightX)) return KeyEvent.KEYCODE_DPAD_RIGHT;
         return 0;
     }
 
@@ -68,115 +64,100 @@ public final class StandaloneTouchControls extends View {
         }
     }
 
-    private void roundedButton(Canvas canvas, float cx, float cy, boolean pressed) {
+    private void roundedButton(Canvas canvas, float cx, boolean pressed) {
         float l = cx - buttonW * 0.5f;
-        float t = cy - buttonH * 0.5f;
+        float t = centerY - buttonH * 0.5f;
         float r = cx + buttonW * 0.5f;
-        float b = cy + buttonH * 0.5f;
-        float radius = buttonH * 0.24f;
+        float b = centerY + buttonH * 0.5f;
+        float radius = buttonH * 0.22f;
 
+        // Deep transparent futuristic panel.
         fill.setStyle(Paint.Style.FILL);
         fill.setShader(new LinearGradient(0, t, 0, b,
-                pressed ? 0xAA3A7F92 : 0x88406474,
-                0x55301D48, Shader.TileMode.CLAMP));
+                pressed ? 0xCC3F8397 : 0x99456A76,
+                0x66301D49, Shader.TileMode.CLAMP));
         canvas.drawRoundRect(l, t, r, b, radius, radius, fill);
         fill.setShader(null);
 
-        fill.setColor(pressed ? 0x9947B8D0 : 0x66213A4A);
-        canvas.drawRoundRect(l + 4, t + 4, r - 4, b - 4,
-                radius * 0.82f, radius * 0.82f, fill);
-
-        stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(Math.max(2f, density * 2f));
-        stroke.setColor(pressed ? 0xFFB8FFFF : 0xFF62E8FF);
-        canvas.drawRoundRect(l + 1, t + 1, r - 1, b - 1, radius, radius, stroke);
-        stroke.setStrokeWidth(Math.max(1f, density));
-        stroke.setColor(0xFF8A4EAE);
+        // Dark inner glass.
+        fill.setColor(pressed ? 0xAA46B9D3 : 0x7720394A);
         canvas.drawRoundRect(l + 5, t + 5, r - 5, b - 5,
-                radius * 0.82f, radius * 0.82f, stroke);
+                radius * 0.78f, radius * 0.78f, fill);
 
+        // Bright cyan outer frame and purple inner frame.
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(Math.max(2f, density * 2.2f));
+        stroke.setColor(pressed ? 0xFFFFFFFF : 0xFF63EFFF);
+        stroke.setShadowLayer(pressed ? 8f * density : 4f * density,
+                0, 0, 0xAA35DFFF);
+        setLayerType(View.LAYER_TYPE_SOFTWARE, stroke);
+        canvas.drawRoundRect(l + 1, t + 1, r - 1, b - 1, radius, radius, stroke);
+        stroke.clearShadowLayer();
+
+        stroke.setStrokeWidth(Math.max(1f, density));
+        stroke.setColor(0xFF874DAA);
+        canvas.drawRoundRect(l + 6, t + 6, r - 6, b - 6,
+                radius * 0.78f, radius * 0.78f, stroke);
+
+        // Subtle horizontal scan lines.
         stroke.setStrokeWidth(Math.max(1f, density));
         stroke.setColor(0x5562E8FF);
         for (int i = 1; i < 5; i++) {
             float yy = t + buttonH * (i / 5f);
-            canvas.drawLine(l + 10, yy, r - 10, yy, stroke);
+            canvas.drawLine(l + 14, yy, r - 14, yy, stroke);
         }
     }
 
-    private void drawArrow(Canvas canvas, float cx, float cy, int direction, boolean pressed) {
-        float s = Math.min(buttonW, buttonH) * 0.25f;
-        float shaft = s * 0.68f;
-        float head = s * 0.95f;
+    private void drawArrow(Canvas canvas, float cx, int direction, boolean pressed) {
+        float s = Math.min(buttonW, buttonH) * 0.34f;
+        float shaft = s * 0.62f;
+        float head = s * 0.92f;
 
         arrow.reset();
         if (direction == KeyEvent.KEYCODE_DPAD_LEFT) {
-            arrow.moveTo(cx - head, cy);
-            arrow.lineTo(cx - shaft * 0.15f, cy - s);
-            arrow.lineTo(cx - shaft * 0.15f, cy - shaft * 0.45f);
-            arrow.lineTo(cx + head * 0.55f, cy - shaft * 0.45f);
-            arrow.lineTo(cx + head * 0.55f, cy + shaft * 0.45f);
-            arrow.lineTo(cx - shaft * 0.15f, cy + shaft * 0.45f);
-            arrow.lineTo(cx - shaft * 0.15f, cy + s);
-            arrow.close();
-        } else if (direction == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            arrow.moveTo(cx + head, cy);
-            arrow.lineTo(cx + shaft * 0.15f, cy - s);
-            arrow.lineTo(cx + shaft * 0.15f, cy - shaft * 0.45f);
-            arrow.lineTo(cx - head * 0.55f, cy - shaft * 0.45f);
-            arrow.lineTo(cx - head * 0.55f, cy + shaft * 0.45f);
-            arrow.lineTo(cx + shaft * 0.15f, cy + shaft * 0.45f);
-            arrow.lineTo(cx + shaft * 0.15f, cy + s);
-            arrow.close();
-        } else if (direction == KeyEvent.KEYCODE_DPAD_UP) {
-            arrow.moveTo(cx, cy - head);
-            arrow.lineTo(cx - s, cy + shaft * 0.15f);
-            arrow.lineTo(cx - shaft * 0.45f, cy + shaft * 0.15f);
-            arrow.lineTo(cx - shaft * 0.45f, cy + head * 0.55f);
-            arrow.lineTo(cx + shaft * 0.45f, cy + head * 0.55f);
-            arrow.lineTo(cx + shaft * 0.45f, cy + shaft * 0.15f);
-            arrow.lineTo(cx + s, cy + shaft * 0.15f);
+            arrow.moveTo(cx - head, centerY);
+            arrow.lineTo(cx - shaft * 0.10f, centerY - s);
+            arrow.lineTo(cx - shaft * 0.10f, centerY - shaft * 0.42f);
+            arrow.lineTo(cx + head * 0.55f, centerY - shaft * 0.42f);
+            arrow.lineTo(cx + head * 0.55f, centerY + shaft * 0.42f);
+            arrow.lineTo(cx - shaft * 0.10f, centerY + shaft * 0.42f);
+            arrow.lineTo(cx - shaft * 0.10f, centerY + s);
             arrow.close();
         } else {
-            arrow.moveTo(cx, cy + head);
-            arrow.lineTo(cx - s, cy - shaft * 0.15f);
-            arrow.lineTo(cx - shaft * 0.45f, cy - shaft * 0.15f);
-            arrow.lineTo(cx - shaft * 0.45f, cy - head * 0.55f);
-            arrow.lineTo(cx + shaft * 0.45f, cy - head * 0.55f);
-            arrow.lineTo(cx + shaft * 0.45f, cy - shaft * 0.15f);
-            arrow.lineTo(cx + s, cy - shaft * 0.15f);
+            arrow.moveTo(cx + head, centerY);
+            arrow.lineTo(cx + shaft * 0.10f, centerY - s);
+            arrow.lineTo(cx + shaft * 0.10f, centerY - shaft * 0.42f);
+            arrow.lineTo(cx - head * 0.55f, centerY - shaft * 0.42f);
+            arrow.lineTo(cx - head * 0.55f, centerY + shaft * 0.42f);
+            arrow.lineTo(cx + shaft * 0.10f, centerY + shaft * 0.42f);
+            arrow.lineTo(cx + shaft * 0.10f, centerY + s);
             arrow.close();
         }
 
         stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(Math.max(2f, density * 2.2f));
-        stroke.setColor(pressed ? 0xFFFFFFFF : 0xFF6FF5FF);
-        stroke.setShadowLayer(pressed ? 8f * density : 5f * density, 0, 0, 0xAA35DFFF);
+        stroke.setStrokeWidth(Math.max(2.5f, density * 2.8f));
+        stroke.setColor(pressed ? 0xFFFFFFFF : 0xFF70F7FF);
+        stroke.setShadowLayer(pressed ? 9f * density : 6f * density,
+                0, 0, 0xAA35DFFF);
         setLayerType(View.LAYER_TYPE_SOFTWARE, stroke);
         canvas.drawPath(arrow, stroke);
         stroke.clearShadowLayer();
 
         fill.setStyle(Paint.Style.FILL);
-        fill.setColor(pressed ? 0x6635DFFF : 0x331FEAFF);
+        fill.setColor(pressed ? 0x7735DFFF : 0x4420EAFF);
         canvas.drawPath(arrow, fill);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        boolean up = activeKey == KeyEvent.KEYCODE_DPAD_UP;
-        boolean down = activeKey == KeyEvent.KEYCODE_DPAD_DOWN;
         boolean left = activeKey == KeyEvent.KEYCODE_DPAD_LEFT;
         boolean right = activeKey == KeyEvent.KEYCODE_DPAD_RIGHT;
 
-        roundedButton(canvas, centerX, upY, up);
-        roundedButton(canvas, centerX, downY, down);
-        roundedButton(canvas, leftX, sideY, left);
-        roundedButton(canvas, rightX, sideY, right);
-
-        drawArrow(canvas, centerX, upY, KeyEvent.KEYCODE_DPAD_UP, up);
-        drawArrow(canvas, centerX, downY, KeyEvent.KEYCODE_DPAD_DOWN, down);
-        drawArrow(canvas, leftX, sideY, KeyEvent.KEYCODE_DPAD_LEFT, left);
-        drawArrow(canvas, rightX, sideY, KeyEvent.KEYCODE_DPAD_RIGHT, right);
+        roundedButton(canvas, leftX, left);
+        roundedButton(canvas, rightX, right);
+        drawArrow(canvas, leftX, KeyEvent.KEYCODE_DPAD_LEFT, left);
+        drawArrow(canvas, rightX, KeyEvent.KEYCODE_DPAD_RIGHT, right);
     }
 
     @Override
